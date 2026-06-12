@@ -1,4 +1,5 @@
 import time
+import threading
 import numpy as np
 import sounddevice as sd
 import webrtcvad
@@ -140,3 +141,127 @@ def push_to_talk_record(duration_seconds: int = 5) -> tuple[np.ndarray, np.ndarr
         silence_float32 = silence_data.astype(np.float32) / 32768.0
 
     return audio_float32, silence_float32
+
+
+class ThreadedRecorder:
+    def __init__(self, duration_seconds: int = None):
+        """
+        A non-blocking audio recorder that runs in a background thread.
+        It supports:
+        - Stopping manually at any time.
+        - Auto-stopping when silence is detected (if duration_seconds is None).
+        - Auto-stopping when a maximum duration is reached.
+        """
+        self.sample_rate = settings.SAMPLE_RATE
+        self.vad_aggressiveness = settings.VAD_AGGRESSIVENESS
+        self.silence_ms = settings.SILENCE_MS
+        self.max_record_seconds = settings.MAX_RECORD_SECONDS
+        self.duration_seconds = duration_seconds
+
+        self.frame_duration_ms = 30
+        self.frame_size = int(self.sample_rate * (self.frame_duration_ms / 1000.0))
+
+        self.audio_frames = []
+        self.silence_frames = []
+
+        self.stop_event = threading.Event()
+        self.thread = None
+        self.finished = False
+        self.error = None
+        self.speech_detected_ever = False
+
+    def _record_loop(self):
+        try:
+            vad = webrtcvad.Vad(self.vad_aggressiveness)
+        except Exception as e:
+            self.error = f"Failed to initialize VAD: {e}"
+            self.finished = True
+            return
+
+        max_silence_frames = self.silence_ms // self.frame_duration_ms
+        if self.duration_seconds is not None:
+            max_total_frames = int((self.duration_seconds * 1000) / self.frame_duration_ms)
+        else:
+            max_total_frames = int((self.max_record_seconds * 1000) / self.frame_duration_ms)
+
+        consecutive_silence_frames = 0
+        total_frames = 0
+
+        try:
+            with sd.InputStream(samplerate=self.sample_rate, channels=1, dtype='int16') as stream:
+                while not self.stop_event.is_set() and total_frames < max_total_frames:
+                    frame, overflowed = stream.read(self.frame_size)
+                    if len(frame) == 0:
+                        continue
+
+                    frame_flat = frame.flatten()
+                    frame_bytes = frame_flat.tobytes()
+
+                    is_speech = vad.is_speech(frame_bytes, self.sample_rate)
+
+                    self.audio_frames.append(frame_flat)
+                    if not is_speech:
+                        self.silence_frames.append(frame_flat)
+
+                    total_frames += 1
+
+                    if self.duration_seconds is None:
+                        # Auto detect silence logic
+                        if is_speech:
+                            self.speech_detected_ever = True
+                            consecutive_silence_frames = 0
+                        else:
+                            if self.speech_detected_ever:
+                                consecutive_silence_frames += 1
+                                if consecutive_silence_frames >= max_silence_frames:
+                                    break
+                    else:
+                        # PTT mode
+                        if is_speech:
+                            self.speech_detected_ever = True
+
+        except Exception as e:
+            self.error = str(e)
+        finally:
+            self.finished = True
+
+    def start(self):
+        self.audio_frames = []
+        self.silence_frames = []
+        self.stop_event.clear()
+        self.finished = False
+        self.error = None
+        self.speech_detected_ever = False
+
+        self.thread = threading.Thread(target=self._record_loop, daemon=True)
+        self.thread.start()
+
+    def stop(self) -> tuple[np.ndarray, np.ndarray | None]:
+        self.stop_event.set()
+        if self.thread:
+            self.thread.join(timeout=2.0)
+
+        if self.error:
+            raise RuntimeError(self.error)
+
+        if not self.audio_frames:
+            raise ValueError("No audio captured")
+
+        audio_data = np.concatenate(self.audio_frames)
+
+        if not self.speech_detected_ever:
+            raise ValueError("No speech detected, please try again")
+
+        # Normalize int16 -> float32 range [-1.0, 1.0]
+        audio_float32 = audio_data.astype(np.float32) / 32768.0
+
+        silence_float32 = None
+        if self.silence_frames:
+            silence_data = np.concatenate(self.silence_frames)
+            silence_float32 = silence_data.astype(np.float32) / 32768.0
+
+        return audio_float32, silence_float32
+
+    def is_finished(self):
+        return self.finished
+

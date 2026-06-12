@@ -2,6 +2,7 @@ import streamlit as st
 import datetime
 import traceback
 import sys
+import time
 from pathlib import Path
 
 # Add project root to path to ensure imports work correctly when running streamlit
@@ -9,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import settings
 from app.services.pipeline import VoicePipeline
-from app.core.audio_capture import record_until_silence, push_to_talk_record
+from app.core.audio_capture import record_until_silence, push_to_talk_record, ThreadedRecorder
 from app.core.audio_denoiser import reduce_noise, estimate_noise_level
 from app.core.voice_synthesizer import TTSGenerator
 
@@ -75,6 +76,10 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "latest_error" not in st.session_state:
     st.session_state.latest_error = None
+if "recording" not in st.session_state:
+    st.session_state.recording = False
+if "recorder" not in st.session_state:
+    st.session_state.recorder = None
 
 
 
@@ -198,116 +203,138 @@ if st.session_state.latest_error:
 st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
 col_spacer, col_mic = st.columns([0.88, 0.12])
 with col_mic:
-    start_recording = st.button("🎙", key="voice_mic_btn", use_container_width=True, type="primary", help="Record voice input")
+    if st.session_state.recording:
+        mic_clicked = st.button("⏹ Stop", key="voice_mic_btn", use_container_width=True, type="primary", help="Stop recording and process audio")
+    else:
+        mic_clicked = st.button("🎙", key="voice_mic_btn", use_container_width=True, type="secondary", help="Record voice input")
 
 # Native standard chat input box
 user_typed_input = st.chat_input("Message Vaani...")
 
-# Handle Voice Input
-if start_recording:
+# Handle Start/Stop click events
+if mic_clicked:
     st.session_state.latest_error = None
+    if not st.session_state.recording:
+        # Start background recording
+        st.session_state.recording = True
+        duration = ptt_duration if ptt_mode == "Push to talk" else None
+        st.session_state.recorder = ThreadedRecorder(duration_seconds=duration)
+        st.session_state.recorder.start()
+        st.rerun()
+    else:
+        # Stop background recording manually
+        st.session_state.recording = False
+        st.rerun()
 
-    # Step 1: Capture live audio (with listening spinner)
-    audio = None
-    silence_audio = None
-    with st.spinner("🎙 Listening... Speak now."):
+# If recording is active, poll the recorder state
+if st.session_state.recording:
+    st.info("🎙 Listening... Speak now. Click the ⏹ Stop button when done.")
+    while st.session_state.recording:
+        if st.session_state.recorder and st.session_state.recorder.is_finished():
+            # Stopped automatically (silence detected or max recording timeout reached)
+            st.session_state.recording = False
+            st.rerun()
+        time.sleep(0.1)
+
+# Handle Voice Input processing when recording has finished and a recorder exists
+audio = None
+silence_audio = None
+if not st.session_state.recording and st.session_state.recorder is not None:
+    with st.spinner("⚙ Processing speech & generating reply..."):
         try:
-            if ptt_mode == "Push to talk":
-                audio, silence_audio = push_to_talk_record(ptt_duration)
-            else:
-                audio, silence_audio = record_until_silence()
+            audio, silence_audio = st.session_state.recorder.stop()
         except Exception as e:
             st.session_state.latest_error = f"Audio Capture Failed: {e}"
+        finally:
+            st.session_state.recorder = None
 
-    # Step 2: Processing, transcribing, translating & generating reply
     if audio is not None:
-        with st.spinner("⚙ Processing speech & generating reply..."):
-            try:
-                # Load cached model pipeline
+        try:
+            # Load cached model pipeline
+            pipeline = load_pipeline(model_size)
+            if not hasattr(pipeline, "response_generator"):
+                st.cache_resource.clear()
                 pipeline = load_pipeline(model_size)
-                if not hasattr(pipeline, "response_generator"):
-                    st.cache_resource.clear()
-                    pipeline = load_pipeline(model_size)
 
-                # Estimate noise and clean
-                noise_level = estimate_noise_level(audio)
-                audio_cleaned = reduce_noise(audio, settings.SAMPLE_RATE, silence_audio=silence_audio)
+            # Estimate noise and clean
+            noise_level = estimate_noise_level(audio)
+            audio_cleaned = reduce_noise(audio, settings.SAMPLE_RATE, silence_audio=silence_audio)
 
-                # Transcribe
-                transcribe_result = pipeline.stt_engine.transcribe(audio_cleaned)
-                original_text = transcribe_result["text"]
-                detected_lang = transcribe_result["language"]
-                confidence = transcribe_result["confidence"]
+            # Transcribe
+            transcribe_result = pipeline.stt_engine.transcribe(audio_cleaned)
+            original_text = transcribe_result["text"]
+            detected_lang = transcribe_result["language"]
+            confidence = transcribe_result["confidence"]
 
-                # Translate
-                if detected_lang == "en":
-                    english_text = original_text
-                else:
-                    english_text = pipeline.translation_engine.translate_mixed(original_text)
+            # Translate
+            if detected_lang == "en":
+                english_text = original_text
+            else:
+                english_text = pipeline.translation_engine.translate_mixed(original_text)
 
-                # Format chat payload to submit to Ollama
-                payload_history = [
-                    {"role": msg["role"], "content": msg["content"]}
-                    for msg in st.session_state.chat_history
-                ]
+            # Format chat payload to submit to Ollama
+            payload_history = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in st.session_state.chat_history
+            ]
+            
+            # Append the newly translated user query to the history
+            payload = payload_history + [{"role": "user", "content": english_text}]
+
+            # Construct metadata dictionary
+            metadata = {
+                "original_text": original_text,
+                "detected_language": detected_lang,
+                "confidence": confidence,
+                "noise_level": noise_level
+            }
+
+            # Save user prompt to history
+            st.session_state.chat_history.append({
+                "role": "user",
+                "content": english_text,
+                "metadata": metadata
+            })
+
+            # Stream response dynamically in the UI
+            with st.chat_message("user"):
+                st.markdown(english_text)
+                lang_badge = get_language_badge_html(detected_lang)
+                noise_dot = get_noise_level_html(noise_level)
+                st.markdown(
+                    f"<div style='margin-top: 6px; padding: 4px 8px; background: rgba(150, 150, 150, 0.05); border-radius: 6px; font-size: 12px; color: gray;'>"
+                    f"{lang_badge} {noise_dot} | <i>Original: \"{original_text}\"</i> | Confidence: {confidence:.1%}"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+            with st.chat_message("assistant"):
+                llm_response = st.write_stream(pipeline.response_generator.generate_response_stream(payload))
                 
-                # Append the newly translated user query to the history
-                payload = payload_history + [{"role": "user", "content": english_text}]
+                tts_bytes = None
+                if enable_tts:
+                    try:
+                        tts_bytes = voice_synthesizer.generate_speech(
+                            llm_response,
+                            voice_id=selected_voice_id,
+                            rate=tts_rate,
+                            volume=tts_volume
+                        )
+                        st.audio(tts_bytes, format="audio/wav", autoplay=True)
+                    except Exception as tts_err:
+                        st.warning(f"Voice generation failed: {tts_err}")
 
-                # Construct metadata dictionary
-                metadata = {
-                    "original_text": original_text,
-                    "detected_language": detected_lang,
-                    "confidence": confidence,
-                    "noise_level": noise_level
-                }
+            # Save model response to history
+            st.session_state.chat_history.append({
+                "role": "assistant",
+                "content": llm_response,
+                "tts_audio": tts_bytes
+            })
+            st.rerun()
 
-                # Save user prompt to history
-                st.session_state.chat_history.append({
-                    "role": "user",
-                    "content": english_text,
-                    "metadata": metadata
-                })
-
-                # Stream response dynamically in the UI
-                with st.chat_message("user"):
-                    st.markdown(english_text)
-                    lang_badge = get_language_badge_html(detected_lang)
-                    noise_dot = get_noise_level_html(noise_level)
-                    st.markdown(
-                        f"<div style='margin-top: 6px; padding: 4px 8px; background: rgba(150, 150, 150, 0.05); border-radius: 6px; font-size: 12px; color: gray;'>"
-                        f"{lang_badge} {noise_dot} | <i>Original: \"{original_text}\"</i> | Confidence: {confidence:.1%}"
-                        f"</div>",
-                        unsafe_allow_html=True
-                    )
-
-                with st.chat_message("assistant"):
-                    llm_response = st.write_stream(pipeline.response_generator.generate_response_stream(payload))
-                    
-                    tts_bytes = None
-                    if enable_tts:
-                        try:
-                            tts_bytes = voice_synthesizer.generate_speech(
-                                llm_response,
-                                voice_id=selected_voice_id,
-                                rate=tts_rate,
-                                volume=tts_volume
-                            )
-                            st.audio(tts_bytes, format="audio/wav", autoplay=True)
-                        except Exception as tts_err:
-                            st.warning(f"Voice generation failed: {tts_err}")
-
-                # Save model response to history
-                st.session_state.chat_history.append({
-                    "role": "assistant",
-                    "content": llm_response,
-                    "tts_audio": tts_bytes
-                })
-                st.rerun()
-
-            except Exception as e:
-                st.session_state.latest_error = str(e)
-                st.rerun()
+        except Exception as e:
+            st.session_state.latest_error = str(e)
+            st.rerun()
 
 # Handle Typed Chat Input
 if user_typed_input:
