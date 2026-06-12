@@ -1,0 +1,28 @@
+# =============================================================================
+# Vaani Dependencies (Optimized for Python 3.13 compatibility)
+# =============================================================================
+
+# --- Audio Processing ---
+sounddevice>=0.4.6         # Captures live audio stream from the microphone
+webrtcvad-wheels>=2.0.14   # Voice Activity Detection (silence vs speech detection, pre-compiled for Windows & Python 3.13)
+noisereduce>=3.0.2         # Cleans background noise from raw audio inputs
+numpy>=2.1.0               # Performs matrix operations and manipulations on audio arrays (Python 3.13 wheels)
+
+# --- AI & Translation Models ---
+torch>=2.6.0               # Core deep learning backend required by transformers (Python 3.13 wheels)
+faster-whisper>=1.0.3      # High-performance speech-to-text engine optimized for CPU execution
+transformers>=4.45.0       # Interface for Helsinki-NLP machine translation models (supports tokenizers with Python 3.13 wheels)
+sentencepiece>=0.2.1       # Text tokenizer dependency required by translation models (Python 3.13 wheels)
+langdetect>=1.0.9          # Fallback language detector for mixed-language sentence translations
+
+# --- Frontend & UI ---
+streamlit>=1.35.0          # Lightweight framework for rendering the web application UI (supports NumPy 2.x)
+
+# --- Utilities ---
+python-dotenv>=1.0.1       # Loads environment configurations from the local .env file
+
+# --- Text-to-Speech ---
+pyttsx3>=2.90              # Offline text-to-speech engine
+
+# --- Testing ---
+pytest>=8.1.1              # Unit testing framework

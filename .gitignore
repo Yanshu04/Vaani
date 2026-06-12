@@ -1,0 +1,22 @@
+# Virtual environment
+venv/
+.venv/
+
+# Local model weights
+models/
+
+# Python caching and byte-compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment configuration (secrets, local settings)
+.env
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Output audio files
+*.wav
