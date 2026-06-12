@@ -1,89 +1,82 @@
 # Vaani 🎙
 
-Vaani (meaning "voice" in Hindi/Gujarati) is a local, offline, voice-activated multilingual chatbot that transcribes and translates spoken Hindi, English, or Gujarati, sends the English prompt to a local LLM, and displays the conversational reply. Designed to operate 100% locally and offline, the project requires zero external API keys and guarantees that your voice data never leaves your machine.
+Vaani is a voice assistant that runs completely offline on your computer. You can speak to it in **Hindi, Gujarati, or English**. It filters out background noise, transcribes and translates your voice to English, gets a response from a local AI model (via Ollama), and speaks the answer back to you.
 
-## Prerequisites
+No API keys, no internet required, and your audio data never leaves your machine.
 
-- **Python**: version 3.10 or higher
-- **Ollama**: Installed and running locally on your machine. Download from [ollama.com](https://ollama.com/).
-- **Disk Space**: At least 5 GB of free space to accommodate offline models (~2.1 GB for STT/translation, ~950 MB for the Qwen LLM).
-- **Audio hardware**: An active working microphone.
+---
 
-## Installation & Setup
+## What's inside?
+- **STT (Speech-to-Text):** `faster-whisper` for multilingual transcription.
+- **Translation:** Meta's `NLLB-200` to translate Hindi/Gujarati inputs to English.
+- **Brain:** Local `Ollama` server (default is `qwen2.5:1.5b`).
+- **TTS (Text-to-Speech):** Offline SAPI5 (Windows voices like David or Zira) running in a background thread.
+- **Audio Cleaning:** WebRTC Voice Activity Detection (`webrtcvad`) and `noisereduce` to clean mic static.
 
-1. **Clone the repository** (or navigate to the workspace directory):
-   ```bash
-   cd Vaani
-   ```
+---
 
-2. **Set up a Python Virtual Environment**:
-   ```bash
-   python -m venv venv
-   # On Windows (PowerShell):
-   .\venv\Scripts\Activate.ps1
-   # On macOS/Linux:
-   source venv/bin/activate
-   ```
+## Getting Started
 
-3. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 1. Requirements
+- Python 3.10 or higher.
+- A working microphone.
+- [Ollama](https://ollama.com/) installed and running.
+- Around 5 GB of free disk space (to store the offline models).
 
-4. **Run the One-Time Speech & Translation Model Downloader**:
-   This script pre-caches the Whisper and Helsinki-NLP models locally under the `./models` directory so transcription and translation work completely offline.
-   ```bash
-   python download_models.py
-   ```
+### 2. Setup
+Open your terminal in the project folder and run:
 
-5. **Set up local Ollama & Pull the LLM Chat Model**:
-   - Ensure you have downloaded and installed [Ollama](https://ollama.com/).
-   - Open your terminal and pull the default recommended lightweight chat model (`qwen2.5:1.5b`):
-     ```bash
-     ollama pull qwen2.5:1.5b
-     ```
-   - Make sure the Ollama application is running in the background.
+```bash
+# 1. Create and activate virtual environment
+python -m venv venv
+.\venv\Scripts\activate
 
-## Running the Application
+# 2. Install requirements
+pip install -r requirements.txt
 
-1. Make sure your local **Ollama** service is running in the background.
-2. Launch the Streamlit frontend dashboard:
-   ```bash
-   streamlit run frontend/dashboard.py
-   ```
-3. A web page will automatically load in your default browser (typically at `http://localhost:8502`).
+# 3. Download the speech & translation models
+python download_models.py
 
-### How to Interact
-Once the app loads, you have two ways to chat with Vaani:
-- **Voice Chat**: Click the red **🎙 Start Speaking** button, speak your query in Hindi, Gujarati, or English, and wait. The app automatically stops recording when it detects silence (or after a timeout) and generates a reply.
-- **Text Chat**: Scroll to the bottom and use the **native chat input box**. Type your message in Hindi, Gujarati, or English and press Enter. Non-English text is automatically translated to English before querying the model.
+# 4. Pull the LLM model in Ollama
+ollama pull qwen2.5:1.5b
+```
 
-## Reference Tables
+---
 
-### Supported Languages
-| Language | Code | Native Script Examples |
-| :--- | :---: | :--- |
-| **English** | `en` | "How are you doing today?" |
-| **Hindi** | `hi` | "नमस्ते, आप कैसे हैं?" |
-| **Gujarati** | `gu` | "નમસ્તે, તમે કેમ છો?" |
+## Running the App
+Make sure your Ollama app is running in the background, then launch the UI:
 
-### Whisper Model Options
-Select the Whisper model size in the application sidebar depending on your CPU capabilities:
-| Model Size | Speed on CPU | Accuracy | Memory Footprint |
-| :--- | :--- | :--- | :--- |
-| **tiny** | Extremely Fast | Low (prone to misspellings) | ~70 MB |
-| **small** | Fast | Balanced | ~460 MB |
-| **medium** *(Default)* | Moderate | High | ~1.5 GB |
-| **large-v2** | Slow | Maximum / Human-Level | ~3.0 GB |
+```bash
+streamlit run frontend/dashboard.py
+```
 
-## Troubleshooting
+It will automatically open a tab in your browser (usually at `http://localhost:8501`).
 
-- **Microphone Access / Permission Denied Error**:
-  - Make sure your operating system settings allow apps to access your microphone.
-  - On Windows, go to *Settings > Privacy & security > Microphone* and ensure "Let desktop apps access your microphone" is toggled ON.
-- **"No speech detected" / "Low confidence" Error**:
-  - Speak closer to the microphone.
-  - Make sure the room has minimal ambient noise. The noise indicator in the app should register as green ("low") or orange ("medium").
-- **Model Loading Failures**:
-  - Ensure that the download script completes successfully with checkmarks.
-  - Verify that the `./models` directory contains the model subfolders.
+---
+
+## How to use it
+1. **By Voice:** Click the **🎙** button, speak in Hindi, Gujarati, or English, and wait. The app stops recording when you pause speaking, generates a response, and plays the voice response automatically.
+2. **By Text:** Type your query in the input box at the bottom. Hindi or Gujarati inputs are translated to English before going to the LLM.
+3. **Sidebar Settings:** You can change the Whisper model size (use `tiny` if your computer is slow, or `medium` for better accuracy), turn voice output on/off, change the assistant voice, or clear the chat history.
+
+---
+
+## Project Structure
+Here is where the main files are located:
+```text
+Vaani/
+├── app/
+│   ├── core/
+│   │   ├── audio_capture.py       # Recording and silence detection
+│   │   ├── audio_denoiser.py      # Noise cleaning
+│   │   ├── stt_engine.py          # Whisper speech-to-text
+│   │   ├── translation_engine.py  # NLLB translation
+│   │   ├── response_generator.py  # Local Ollama integration
+│   │   └── voice_synthesizer.py   # Text-To-Speech (TTS)
+│   └── services/
+│       └── pipeline.py            # Orchestrator linking engines together
+├── frontend/
+│   └── dashboard.py               # Streamlit web UI
+├── download_models.py             # One-time downloader script
+└── requirements.txt               # Dependencies
+```
