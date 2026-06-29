@@ -61,6 +61,9 @@ class VoicePipeline:
             payload = chat_history + [{"role": "user", "content": english_text}]
             llm_response = self.response_generator.generate_response(payload)
 
+            # Translate response back to user's spoken language if needed
+            translated_llm_response = self.translation_engine.translate_to_lang(llm_response, detected_lang)
+
             # Step 7: Return final success dictionary
             return {
                 "original_text": original_text,
@@ -68,7 +71,8 @@ class VoicePipeline:
                 "detected_language": detected_lang,
                 "confidence": confidence,
                 "noise_level": noise_level,
-                "llm_response": llm_response
+                "llm_response": llm_response,
+                "translated_llm_response": translated_llm_response
             }
 
         except (UnsupportedLanguageError, LowConfidenceError) as e:

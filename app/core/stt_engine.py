@@ -13,25 +13,49 @@ class LowConfidenceError(Exception):
     pass
 
 class Transcriber:
+    _cuda_disabled = False
+
     def __init__(self):
         """
         Initializes the faster-whisper model. Auto-detects and uses CUDA GPU if available.
         Saves downloaded model weights to the configured local folder.
         """
         os.makedirs(settings.MODELS_DIR, exist_ok=True)
+        import numpy as np
         
         # Auto-detect CUDA GPU availability
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        if Transcriber._cuda_disabled:
+            self.device = "cpu"
+        else:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.compute_type = "float16" if self.device == "cuda" else "int8"
         
         print(f"Loading Whisper model '{settings.WHISPER_MODEL}' on {self.device.upper()} with compute_type='{self.compute_type}'...")
-        # download_root specifies where models are cached offline.
-        self.model = WhisperModel(
-            settings.WHISPER_MODEL,
-            device=self.device,
-            compute_type=self.compute_type,
-            download_root=settings.MODELS_DIR
-        )
+        try:
+            self.model = WhisperModel(
+                settings.WHISPER_MODEL,
+                device=self.device,
+                compute_type=self.compute_type,
+                download_root=settings.MODELS_DIR
+            )
+            # Verify CUDA runtime/DLL health by performing a dummy language detection pass
+            if self.device == "cuda":
+                dummy_audio = np.zeros(1600, dtype=np.float32)
+                self.model.detect_language(dummy_audio)
+        except Exception as e:
+            if self.device == "cuda":
+                print(f"CUDA execution failed ({e}). Falling back to CPU execution...")
+                Transcriber._cuda_disabled = True
+                self.device = "cpu"
+                self.compute_type = "int8"
+                self.model = WhisperModel(
+                    settings.WHISPER_MODEL,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    download_root=settings.MODELS_DIR
+                )
+            else:
+                raise e
         print(f"Whisper model '{settings.WHISPER_MODEL}' loaded successfully on {self.device.upper()}.")
 
     def transcribe(self, audio: np.ndarray) -> dict:

@@ -23,6 +23,8 @@ python-dotenv>=1.0.1       # Loads environment configurations from the local .en
 
 # --- Text-to-Speech ---
 pyttsx3>=2.90              # Offline text-to-speech engine
+edge-tts>=7.2.8            # Microsoft Edge's translation service/TTS (natural neural voices)
+
 
 # --- Testing ---
 pytest>=8.1.1              # Unit testing framework
